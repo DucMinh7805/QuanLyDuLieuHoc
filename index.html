@@ -26,7 +26,8 @@
     <!-- Firebase SDK (Version 11) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // Đã đổi từ signInWithPopup sang signInWithRedirect cho tương thích điện thoại
+        import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         /* ==========================================
@@ -121,8 +122,21 @@
         }
 
         /* ==========================================
-           XÁC THỰC NGƯỜI DÚNG (LOGIN)
+           XÁC THỰC NGƯỜI DÚNG (LOGIN) - Cập nhật tương thích Điện Thoại
            ========================================== */
+           
+        // Xử lý kết quả sau khi trang được redirect về từ trang đăng nhập Google
+        getRedirectResult(auth).then((result) => {
+            if (result) {
+                // Đăng nhập thành công, state listener sẽ xử lý tiếp
+            }
+        }).catch((error) => {
+            console.error("Lỗi redirect:", error);
+            showToast("Lỗi xác thực Google!", "error");
+            loginBtn.innerHTML = '<i data-lucide="log-in" class="w-5 h-5"></i> Đăng nhập bằng Google';
+            lucide.createIcons();
+        });
+
         async function initAuth() {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                  await signInWithCustomToken(auth, __initial_auth_token);
@@ -136,7 +150,8 @@
         loginBtn.addEventListener('click', async () => {
             try {
                 loginBtn.innerHTML = '<div class="animate-spin rounded-full h-5 w-5 border-b-2 border-space-900"></div>';
-                await signInWithPopup(auth, provider);
+                // Đổi thành signInWithRedirect chống chặn popup trên điện thoại
+                await signInWithRedirect(auth, provider);
             } catch (error) {
                 console.error("Lỗi đăng nhập:", error);
                 showToast("Đăng nhập thất bại!", "error");
@@ -166,7 +181,7 @@
                 lucide.createIcons();
                 fetchDocuments();
             } else if (user && user.isAnonymous && typeof __initial_auth_token === 'undefined') {
-                // Ignore anonymous users if we enforce Google Login
+                // Hủy phiên vô danh nếu yêu cầu Đăng nhập Google
                 signOut(auth);
             } else {
                 currentUser = null;
@@ -175,6 +190,8 @@
                 mainApp.classList.add('hidden');
                 mainApp.classList.remove('flex');
                 if(unsubscribeSnapshot) unsubscribeSnapshot();
+                loginBtn.innerHTML = '<i data-lucide="log-in" class="w-5 h-5"></i> Đăng nhập bằng Google';
+                lucide.createIcons();
             }
         });
 
