@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DocHub - Galaxy Edition V2</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        space: {
+                            900: '#0B0D17',
+                            800: '#15192B',
+                            700: '#1E2440'
+                        },
+                        neon: {
+                            blue: '#00F0FF',
+                            purple: '#B026FF',
+                            pink: '#FF007F'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Firebase SDK (Version 11) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        /* ==========================================
+           CẤU HÌNH FIREBASE
+           ========================================== */
+        let firebaseConfig;
+        let appId = 'dochub-galaxy-v2';
+
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+            if (typeof __app_id !== 'undefined') appId = __app_id;
+        } else {
+            // NẾU BRO ĐƯA LÊN GITHUB, HÃY THAY MÃ FIREBASE CỦA BRO VÀO ĐÂY:
+            firebaseConfig = {
+                apiKey: "AIzaSyCLqRN936fxkbdu78248mdXWT7uSzhxYPQ",
+   		authDomain: "quanlydulieuapp.firebaseapp.com",
+  		projectId: "quanlydulieuapp",
+  		storageBucket: "quanlydulieuapp.firebasestorage.app",
+  		messagingSenderId: "907400767703",
+  		appId: "1:907400767703:web:bd4590862b274e2ee82892",
+  		measurementId: "G-L8YRSMQT5L"
+            };
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUser = null;
+        let documents = [];
+        let currentFilter = 'all';
+        let unsubscribeSnapshot = null;
+
+        /* ==========================================
+           UI ELEMENTS
+           ========================================== */
+        const docListEl = document.getElementById('docList');
+        const searchInput = document.getElementById('searchInput');
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        
+        // Modal Thêm
+        const addModal = document.getElementById('addModal');
+        const addBtn = document.getElementById('addBtn');
+        const cancelAddBtn = document.getElementById('cancelAddBtn');
+        const addDocForm = document.getElementById('addDocForm');
+        
+        // Cài đặt / Thông báo
+        const settingsBtn = document.getElementById('settingsBtn');
+        const homeBtn = document.getElementById('homeBtn');
+        const toastContainer = document.getElementById('toastContainer');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+
+        /* ==========================================
+           HÀM TIỆN ÍCH
+           ========================================== */
+        
+        // Hiển thị thông báo (Toast) thay vì dùng alert()
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            const bgColor = type === 'success' ? 'bg-neon-blue' : 'bg-neon-pink';
+            toast.className = `fixed top-20 left-1/2 transform -translate-x-1/2 ${bgColor} text-space-900 px-4 py-2 rounded-full shadow-lg z-50 text-sm font-bold opacity-0 transition-opacity duration-300`;
+            toast.innerText = message;
+            
+            toastContainer.appendChild(toast);
+            
+            // Hiện
+            setTimeout(() => { toast.classList.remove('opacity-0'); }, 10);
+            
+            // Ẩn và xóa
+            setTimeout(() => {
+                toast.classList.add('opacity-0');
+                setTimeout(() => { toast.remove(); }, 300);
+            }, 3000);
+        }
+
+        // Fix lỗi URL không bắt đầu bằng http:// hoặc https://
+        function formatUrl(url) {
+            if (!url) return '#';
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                return 'https://' + url;
+            }
+            return url;
+        }
+
+        /* ==========================================
+           LOGIC ỨNG DỤNG
+           ========================================== */
+           
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Lỗi đăng nhập:", error);
+                docListEl.innerHTML = `<p class="text-neon-pink text-center mt-10">Lỗi kết nối cơ sở dữ liệu. Vui lòng kiểm tra Firebase Config.</p>`;
+            }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                fetchDocuments();
+            } else {
+                currentUser = null;
+                if(unsubscribeSnapshot) unsubscribeSnapshot();
+            }
+        });
+
+        function fetchDocuments() {
+            if (!currentUser) return;
+            loadingIndicator.classList.remove('hidden');
+
+            const docsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'documents');
+            
+            unsubscribeSnapshot = onSnapshot(docsRef, (snapshot) => {
+                documents = [];
+                snapshot.forEach((doc) => {
+                    documents.push({ id: doc.id, ...doc.data() });
+                });
+                
+                documents.sort((a, b) => {
+                    const timeA = a.createdAt ? a.createdAt.toMillis() : 0;
+                    const timeB = b.createdAt ? b.createdAt.toMillis() : 0;
+                    return timeB - timeA;
+                });
+
+                loadingIndicator.classList.add('hidden');
+                filterAndRenderDocs();
+            }, (error) => {
+                console.error("Lỗi lấy dữ liệu:", error);
+                loadingIndicator.classList.add('hidden');
+                showToast("Lỗi tải dữ liệu!", "error");
+            });
+        }
+
+        // Xử lý Thêm
+        addDocForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentUser) {
+                showToast("Chưa kết nối CSDL!", "error");
+                return;
+            }
+
+            const title = document.getElementById('docTitle').value.trim();
+            const urlRaw = document.getElementById('docUrl').value.trim();
+            const source = document.getElementById('docSource').value;
+            const tagsInput = document.getElementById('docTags').value;
+            
+            if (!title) {
+                showToast("Vui lòng nhập tên tài liệu!", "error");
+                return;
+            }
+
+            const url = formatUrl(urlRaw);
+            const tags = tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag !== "");
+
+            const submitBtn = document.getElementById('submitDocBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = 'Đang lưu...';
+
+            try {
+                const docsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'documents');
+                await addDoc(docsRef, {
+                    title,
+                    url,
+                    source,
+                    tags,
+                    createdAt: serverTimestamp()
+                });
+                
+                closeModal();
+                addDocForm.reset();
+                showToast("Đã lưu tài liệu!");
+            } catch (error) {
+                console.error("Lỗi thêm tài liệu:", error);
+                showToast("Lỗi khi lưu!", "error");
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'Lưu tài liệu';
+            }
+        });
+
+        // Xóa tài liệu
+        window.deleteDocument = async (docId, event) => {
+            // Ngăn chặn sự kiện click lan ra ngoài (không mở link khi bấm xóa)
+            if(event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            if (!currentUser) return;
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'documents', docId);
+                await deleteDoc(docRef);
+                showToast("Đã xóa tài liệu!");
+            } catch (error) {
+                console.error("Lỗi xóa tài liệu:", error);
+                showToast("Không thể xóa!", "error");
+            }
+        };
+
+        // Render UI
+        function renderDocs(data) {
+            if (data.length === 0) {
+                docListEl.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-16 text-center">
+                        <div class="w-20 h-20 rounded-full bg-space-800 border border-space-700 flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(0,240,255,0.2)]">
+                            <i data-lucide="astronaut" class="w-10 h-10 text-neon-blue"></i>
+                        </div>
+                        <p class="text-gray-400 text-sm">Vũ trụ trống rỗng.</p>
+                        <p class="text-gray-500 text-xs mt-1">Bấm dấu + để thêm tài liệu mới.</p>
+                    </div>
+                `;
+            } else {
+                docListEl.innerHTML = data.map(createDocCard).join('');
+            }
+            lucide.createIcons();
+        }
+
+        // SỬA LẠI THẺ <a> ĐỂ MỞ LINK CHUẨN XÁC
+        function createDocCard(doc) {
+            let iconName = 'file';
+            let glowColor = 'shadow-[0_0_10px_rgba(255,255,255,0.1)]';
+            let iconColor = 'text-gray-300';
+
+            if (doc.source === 'drive') {
+                iconName = 'hard-drive';
+                glowColor = 'shadow-[0_0_15px_rgba(0,240,255,0.3)]';
+                iconColor = 'text-neon-blue';
+            } else if (doc.source === 'notion') {
+                iconName = 'box';
+                glowColor = 'shadow-[0_0_15px_rgba(255,255,255,0.3)]';
+                iconColor = 'text-white';
+            } else {
+                iconName = 'link-2';
+                glowColor = 'shadow-[0_0_15px_rgba(176,38,255,0.3)]';
+                iconColor = 'text-neon-purple';
+            }
+
+            const tagsHtml = doc.tags && doc.tags.length > 0 
+                ? doc.tags.map(tag => `<span class="inline-block bg-space-700/50 text-gray-300 border border-space-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">#${tag}</span>`).join('')
+                : '';
+                
+            const safeUrl = doc.url ? formatUrl(doc.url) : '#';
+
+            return `
+                <div class="glass-card p-4 rounded-2xl flex gap-4 items-center relative group mb-4 hover:border-neon-blue/30 transition-colors">
+                    <!-- Icon -->
+                    <div class="bg-space-800 p-3 rounded-xl flex-shrink-0 border border-space-700 ${glowColor}">
+                        <i data-lucide="${iconName}" class="w-6 h-6 ${iconColor}"></i>
+                    </div>
+                    
+                    <!-- Nội dung + Link -->
+                    <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="flex-1 min-w-0 block">
+                        <h3 class="font-semibold text-white text-sm truncate hover:text-neon-blue transition-colors">${doc.title}</h3>
+                        <p class="text-xs text-gray-400 mt-1 capitalize">${doc.source}</p>
+                        <div class="flex gap-1 mt-2 overflow-x-hidden flex-wrap">
+                            ${tagsHtml}
+                        </div>
+                    </a>
+                    
+                    <!-- Nút Xóa -->
+                    <button onclick="deleteDocument('${doc.id}', event)" class="flex-shrink-0 text-gray-500 hover:text-neon-pink p-2 bg-space-800 rounded-full border border-space-700 transition-colors z-10 relative">
+                        <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                    </button>
+                </div>
+            `;
+        }
+
+        function filterAndRenderDocs() {
+            const searchTerm = searchInput.value.toLowerCase();
+            
+            const filteredData = documents.filter(doc => {
+                const matchSource = currentFilter === 'all' || doc.source === currentFilter;
+                
+                const titleMatch = doc.title ? doc.title.toLowerCase().includes(searchTerm) : false;
+                const tagMatch = doc.tags ? doc.tags.some(tag => tag.toLowerCase().includes(searchTerm)) : false;
+                
+                const matchSearch = searchTerm === '' || titleMatch || tagMatch;
+
+                return matchSource && matchSearch;
+            });
+
+            renderDocs(filteredData);
+        }
+
+        searchInput.addEventListener('input', filterAndRenderDocs);
+
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                filterBtns.forEach(b => {
+                    b.classList.remove('bg-neon-blue/20', 'text-neon-blue', 'border-neon-blue/50');
+                    b.classList.add('bg-space-800', 'text-gray-400', 'border-space-700');
+                });
+                const clickedBtn = e.currentTarget;
+                clickedBtn.classList.remove('bg-space-800', 'text-gray-400', 'border-space-700');
+                clickedBtn.classList.add('bg-neon-blue/20', 'text-neon-blue', 'border-neon-blue/50');
+
+                currentFilter = clickedBtn.getAttribute('data-source');
+                filterAndRenderDocs();
+            });
+        });
+
+        /* ==========================================
+           TƯƠNG TÁC UI (MODAL & NÚT BOTTOM NAV)
+           ========================================== */
+        function openModal() { addModal.classList.remove('hidden'); addModal.classList.add('flex'); }
+        function closeModal() { addModal.classList.add('hidden'); addModal.classList.remove('flex'); }
+        
+        addBtn.addEventListener('click', openModal);
+        cancelAddBtn.addEventListener('click', closeModal);
+
+        // Nút Home / Radar (Cuộn lên đầu)
+        homeBtn.addEventListener('click', () => {
+            document.querySelector('.content-area').scrollTo({ top: 0, behavior: 'smooth' });
+            searchInput.value = '';
+            filterAndRenderDocs();
+            showToast("Đã quét radar", "success");
+        });
+
+        // Nút Cài đặt
+        settingsBtn.addEventListener('click', () => {
+            showToast("Chức năng cài đặt đang được xây dựng!", "success");
+        });
+
+        initAuth();
+        lucide.createIcons();
+    </script>
+
+    <style>
+        /* GALAXY THEME CSS */
+        body {
+            background-color: #0B0D17;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            overflow: hidden;
+        }
+
+        .galaxy-bg {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: 
+                radial-gradient(circle at 15% 50%, rgba(176, 38, 255, 0.08), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(0, 240, 255, 0.08), transparent 25%);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .glass-card {
+            background: rgba(21, 25, 43, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .glass-header {
+            background: rgba(11, 13, 23, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+
+        .app-container {
+            max-width: 480px;
+            margin: 0 auto;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            z-index: 1;
+        }
+
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: 100px;
+            scroll-behavior: smooth;
+        }
+        
+        .neon-input {
+            background: rgba(30, 36, 64, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            transition: all 0.3s ease;
+        }
+        .neon-input:focus {
+            outline: none;
+            border-color: #00F0FF;
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+
+<div class="galaxy-bg"></div>
+
+<!-- Container chứa thông báo pop-up -->
+<div id="toastContainer"></div>
+
+<div class="app-container">
+    
+    <!-- Header -->
+    <div class="glass-header pt-10 pb-4 px-5 z-10 sticky top-0">
+        <div class="flex justify-between items-center mb-5">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-neon-blue to-neon-purple">DocHub</h1>
+                <p class="text-gray-400 text-xs uppercase tracking-widest mt-1">Trạm không gian tài liệu</p>
+            </div>
+            <div class="w-10 h-10 rounded-full border border-space-700 flex items-center justify-center bg-space-800 shadow-[0_0_10px_rgba(176,38,255,0.2)]">
+                <i data-lucide="user" class="w-5 h-5 text-neon-purple"></i>
+            </div>
+        </div>
+        
+        <!-- Thanh Tìm Kiếm -->
+        <div class="relative">
+            <i data-lucide="search" class="absolute left-4 top-3.5 text-gray-400 w-5 h-5"></i>
+            <input type="text" id="searchInput" 
+                class="w-full neon-input rounded-2xl py-3 pl-12 pr-4 text-sm placeholder-gray-500"
+                placeholder="Tìm tín hiệu (tên, tag)...">
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="px-5 py-3 overflow-x-auto whitespace-nowrap flex gap-3 z-10 border-b border-space-800">
+        <button class="filter-btn active px-5 py-2 bg-neon-blue/20 text-neon-blue border border-neon-blue/50 rounded-full text-xs font-medium transition-all" data-source="all">Tất cả</button>
+        <button class="filter-btn px-5 py-2 bg-space-800 text-gray-400 border border-space-700 rounded-full text-xs font-medium transition-all" data-source="drive">Drive</button>
+        <button class="filter-btn px-5 py-2 bg-space-800 text-gray-400 border border-space-700 rounded-full text-xs font-medium transition-all" data-source="notion">Notion</button>
+        <button class="filter-btn px-5 py-2 bg-space-800 text-gray-400 border border-space-700 rounded-full text-xs font-medium transition-all" data-source="other">Khác</button>
+    </div>
+
+    <!-- Danh sách -->
+    <div class="content-area px-5 py-4" id="docList">
+        <!-- Loading -->
+        <div id="loadingIndicator" class="flex justify-center items-center py-10">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-neon-blue"></div>
+        </div>
+        <!-- Render từ Firebase -->
+    </div>
+
+    <!-- Bottom Nav -->
+    <div class="absolute bottom-0 left-0 w-full glass-header px-8 py-4 flex justify-between items-center z-20 pb-safe">
+        <div id="homeBtn" class="flex flex-col items-center text-neon-blue cursor-pointer transition transform hover:scale-110">
+            <i data-lucide="radar" class="w-6 h-6 mb-1"></i>
+            <span class="text-[10px] font-medium">Radar</span>
+        </div>
+        
+        <!-- Nút Thêm Mới -->
+        <div class="relative -top-6">
+            <button id="addBtn" class="bg-gradient-to-r from-neon-blue to-neon-purple text-white p-4 rounded-full shadow-[0_0_20px_rgba(176,38,255,0.4)] hover:scale-105 transition transform flex items-center justify-center">
+                <i data-lucide="plus" class="w-7 h-7"></i>
+            </button>
+        </div>
+        
+        <div id="settingsBtn" class="flex flex-col items-center text-gray-500 hover:text-white transition cursor-pointer transform hover:scale-110">
+            <i data-lucide="settings" class="w-6 h-6 mb-1"></i>
+            <span class="text-[10px] font-medium">Cài đặt</span>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Thêm Tài Liệu -->
+<div id="addModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-5">
+    <div class="glass-card w-full max-w-sm rounded-3xl p-6 border border-space-700 shadow-[0_0_30px_rgba(0,240,255,0.1)] transform transition-all">
+        <h2 class="text-xl font-bold mb-5 text-white flex items-center gap-2">
+            <i data-lucide="rocket" class="text-neon-pink w-5 h-5"></i> Bắn link mới
+        </h2>
+        <form id="addDocForm" class="flex flex-col gap-4">
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 ml-1">Tên tài liệu <span class="text-neon-pink">*</span></label>
+                <input type="text" id="docTitle" required class="w-full neon-input rounded-xl py-2.5 px-4 text-sm" placeholder="Vd: Bản vẽ kỹ thuật...">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 ml-1">Đường dẫn (URL) <span class="text-neon-pink">*</span></label>
+                <input type="url" id="docUrl" required class="w-full neon-input rounded-xl py-2.5 px-4 text-sm" placeholder="https://...">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 ml-1">Nguồn</label>
+                <select id="docSource" class="w-full neon-input rounded-xl py-2.5 px-4 text-sm appearance-none">
+                    <option value="drive">Google Drive</option>
+                    <option value="notion">Notion</option>
+                    <option value="other">Link Khác</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 ml-1">Tags (cách nhau bởi dấu phẩy)</label>
+                <input type="text" id="docTags" class="w-full neon-input rounded-xl py-2.5 px-4 text-sm" placeholder="Vd: q3, plan, design">
+            </div>
+            
+            <div class="flex gap-3 mt-4">
+                <button type="button" id="cancelAddBtn" class="flex-1 py-3 rounded-xl bg-space-800 text-gray-300 font-medium text-sm hover:bg-space-700 transition">Hủy bỏ</button>
+                <button type="submit" id="submitDocBtn" class="flex-1 py-3 rounded-xl bg-neon-blue text-space-900 font-bold text-sm hover:shadow-[0_0_15px_rgba(0,240,255,0.4)] transition">Lưu tài liệu</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+</body>
+</html>
