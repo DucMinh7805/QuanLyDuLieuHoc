@@ -2,8 +2,8 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DocHub - Galaxy Edition V2</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>DocHub - Galaxy V3</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -12,16 +12,8 @@
             theme: {
                 extend: {
                     colors: {
-                        space: {
-                            900: '#0B0D17',
-                            800: '#15192B',
-                            700: '#1E2440'
-                        },
-                        neon: {
-                            blue: '#00F0FF',
-                            purple: '#B026FF',
-                            pink: '#FF007F'
-                        }
+                        space: { 900: '#0B0D17', 800: '#15192B', 700: '#1E2440' },
+                        neon: { blue: '#00F0FF', purple: '#B026FF', pink: '#FF007F' }
                     }
                 }
             }
@@ -34,118 +26,161 @@
     <!-- Firebase SDK (Version 11) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         /* ==========================================
            CẤU HÌNH FIREBASE
            ========================================== */
         let firebaseConfig;
-        let appId = 'dochub-galaxy-v2';
+        let appId = 'dochub-galaxy-v3';
 
         if (typeof __firebase_config !== 'undefined') {
             firebaseConfig = JSON.parse(__firebase_config);
             if (typeof __app_id !== 'undefined') appId = __app_id;
         } else {
-            // NẾU BRO ĐƯA LÊN GITHUB, HÃY THAY MÃ FIREBASE CỦA BRO VÀO ĐÂY:
+            // MÃ FIREBASE CỦA BRO ĐÃ ĐƯỢC TÍCH HỢP SẴN
             firebaseConfig = {
                 apiKey: "AIzaSyCLqRN936fxkbdu78248mdXWT7uSzhxYPQ",
-   		authDomain: "quanlydulieuapp.firebaseapp.com",
-  		projectId: "quanlydulieuapp",
-  		storageBucket: "quanlydulieuapp.firebasestorage.app",
-  		messagingSenderId: "907400767703",
-  		appId: "1:907400767703:web:bd4590862b274e2ee82892",
-  		measurementId: "G-L8YRSMQT5L"
+                authDomain: "quanlydulieuapp.firebaseapp.com",
+                projectId: "quanlydulieuapp",
+                storageBucket: "quanlydulieuapp.firebasestorage.app",
+                messagingSenderId: "907400767703",
+                appId: "1:907400767703:web:bd4590862b274e2ee82892",
+                measurementId: "G-L8YRSMQT5L"
             };
         }
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
         const db = getFirestore(app);
 
         let currentUser = null;
         let documents = [];
         let currentFilter = 'all';
+        let currentFolderFilter = null;
         let unsubscribeSnapshot = null;
+        let editingDocId = null;
 
         /* ==========================================
            UI ELEMENTS
            ========================================== */
+        const loginScreen = document.getElementById('loginScreen');
+        const mainApp = document.getElementById('mainApp');
+        const loginBtn = document.getElementById('loginBtn');
+        const userAvatar = document.getElementById('userAvatar');
+        
         const docListEl = document.getElementById('docList');
         const searchInput = document.getElementById('searchInput');
         const filterBtns = document.querySelectorAll('.filter-btn');
+        const currentFolderDisplay = document.getElementById('currentFolderDisplay');
         
-        // Modal Thêm
+        // Modal
+        const modalTitle = document.getElementById('modalTitle');
         const addModal = document.getElementById('addModal');
         const addBtn = document.getElementById('addBtn');
         const cancelAddBtn = document.getElementById('cancelAddBtn');
         const addDocForm = document.getElementById('addDocForm');
         
-        // Cài đặt / Thông báo
-        const settingsBtn = document.getElementById('settingsBtn');
-        const homeBtn = document.getElementById('homeBtn');
+        // Form Inputs
+        const docTitleInput = document.getElementById('docTitle');
+        const docUrlInput = document.getElementById('docUrl');
+        const docSourceInput = document.getElementById('docSource');
+        const docTagsInput = document.getElementById('docTags');
+        const docFolderInput = document.getElementById('docFolder');
+        
+        // Toast & Loading
         const toastContainer = document.getElementById('toastContainer');
         const loadingIndicator = document.getElementById('loadingIndicator');
+
+        // Bottom Nav
+        const homeBtn = document.getElementById('homeBtn');
+        const folderViewBtn = document.getElementById('folderViewBtn');
 
         /* ==========================================
            HÀM TIỆN ÍCH
            ========================================== */
-        
-        // Hiển thị thông báo (Toast) thay vì dùng alert()
         function showToast(message, type = 'success') {
             const toast = document.createElement('div');
-            const bgColor = type === 'success' ? 'bg-neon-blue' : 'bg-neon-pink';
-            toast.className = `fixed top-20 left-1/2 transform -translate-x-1/2 ${bgColor} text-space-900 px-4 py-2 rounded-full shadow-lg z-50 text-sm font-bold opacity-0 transition-opacity duration-300`;
+            const bgColor = type === 'success' ? 'bg-neon-blue' : (type === 'error' ? 'bg-neon-pink' : 'bg-neon-purple');
+            toast.className = `fixed top-16 left-1/2 transform -translate-x-1/2 ${bgColor} text-space-900 px-5 py-2.5 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.5)] z-[100] text-sm font-bold opacity-0 transition-opacity duration-300`;
             toast.innerText = message;
-            
             toastContainer.appendChild(toast);
-            
-            // Hiện
             setTimeout(() => { toast.classList.remove('opacity-0'); }, 10);
-            
-            // Ẩn và xóa
             setTimeout(() => {
                 toast.classList.add('opacity-0');
                 setTimeout(() => { toast.remove(); }, 300);
             }, 3000);
         }
 
-        // Fix lỗi URL không bắt đầu bằng http:// hoặc https://
         function formatUrl(url) {
             if (!url) return '#';
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                return 'https://' + url;
-            }
+            if (!url.startsWith('http://') && !url.startsWith('https://')) return 'https://' + url;
             return url;
         }
 
         /* ==========================================
-           LOGIC ỨNG DỤNG
+           XÁC THỰC NGƯỜI DÚNG (LOGIN)
            ========================================== */
-           
         async function initAuth() {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Lỗi đăng nhập:", error);
-                docListEl.innerHTML = `<p class="text-neon-pink text-center mt-10">Lỗi kết nối cơ sở dữ liệu. Vui lòng kiểm tra Firebase Config.</p>`;
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                 await signInWithCustomToken(auth, __initial_auth_token);
+            } else if (window.location.hostname.includes('github.io') || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1')) {
+                // Trên GitHub/Local, chờ user tự bấm nút đăng nhập Google
+            } else {
+                 await signInAnonymously(auth);
             }
         }
 
+        loginBtn.addEventListener('click', async () => {
+            try {
+                loginBtn.innerHTML = '<div class="animate-spin rounded-full h-5 w-5 border-b-2 border-space-900"></div>';
+                await signInWithPopup(auth, provider);
+            } catch (error) {
+                console.error("Lỗi đăng nhập:", error);
+                showToast("Đăng nhập thất bại!", "error");
+                loginBtn.innerHTML = '<i data-lucide="log-in" class="w-5 h-5"></i> Đăng nhập bằng Google';
+                lucide.createIcons();
+            }
+        });
+
+        userAvatar.addEventListener('click', async () => {
+            if(confirm("Bạn có muốn đăng xuất khỏi DocHub?")) {
+                await signOut(auth);
+            }
+        });
+
         onAuthStateChanged(auth, (user) => {
-            if (user) {
+            if (user && !user.isAnonymous) {
                 currentUser = user;
+                loginScreen.classList.add('hidden');
+                mainApp.classList.remove('hidden');
+                mainApp.classList.add('flex');
+                
+                if(user.photoURL) {
+                    userAvatar.innerHTML = `<img src="${user.photoURL}" class="w-full h-full rounded-full object-cover">`;
+                } else {
+                    userAvatar.innerHTML = `<i data-lucide="user" class="w-5 h-5 text-neon-purple"></i>`;
+                }
+                lucide.createIcons();
                 fetchDocuments();
+            } else if (user && user.isAnonymous && typeof __initial_auth_token === 'undefined') {
+                // Ignore anonymous users if we enforce Google Login
+                signOut(auth);
             } else {
                 currentUser = null;
+                loginScreen.classList.remove('hidden');
+                loginScreen.classList.add('flex');
+                mainApp.classList.add('hidden');
+                mainApp.classList.remove('flex');
                 if(unsubscribeSnapshot) unsubscribeSnapshot();
             }
         });
 
+        /* ==========================================
+           LOGIC DỮ LIỆU (CRUD)
+           ========================================== */
         function fetchDocuments() {
             if (!currentUser) return;
             loadingIndicator.classList.remove('hidden');
@@ -159,13 +194,15 @@
                 });
                 
                 documents.sort((a, b) => {
+                    if (a.isPinned && !b.isPinned) return -1;
+                    if (!a.isPinned && b.isPinned) return 1;
                     const timeA = a.createdAt ? a.createdAt.toMillis() : 0;
                     const timeB = b.createdAt ? b.createdAt.toMillis() : 0;
                     return timeB - timeA;
                 });
 
                 loadingIndicator.classList.add('hidden');
-                filterAndRenderDocs();
+                renderCurrentView();
             }, (error) => {
                 console.error("Lỗi lấy dữ liệu:", error);
                 loadingIndicator.classList.add('hidden');
@@ -173,23 +210,17 @@
             });
         }
 
-        // Xử lý Thêm
         addDocForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (!currentUser) {
-                showToast("Chưa kết nối CSDL!", "error");
-                return;
-            }
+            if (!currentUser) return;
 
-            const title = document.getElementById('docTitle').value.trim();
-            const urlRaw = document.getElementById('docUrl').value.trim();
-            const source = document.getElementById('docSource').value;
-            const tagsInput = document.getElementById('docTags').value;
+            const title = docTitleInput.value.trim();
+            const urlRaw = docUrlInput.value.trim();
+            const source = docSourceInput.value;
+            const folder = docFolderInput.value.trim() || 'Chung';
+            const tagsInput = docTagsInput.value;
             
-            if (!title) {
-                showToast("Vui lòng nhập tên tài liệu!", "error");
-                return;
-            }
+            if (!title) { showToast("Vui lòng nhập tên tài liệu!", "error"); return; }
 
             const url = formatUrl(urlRaw);
             const tags = tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag !== "");
@@ -200,55 +231,108 @@
 
             try {
                 const docsRef = collection(db, 'artifacts', appId, 'users', currentUser.uid, 'documents');
-                await addDoc(docsRef, {
-                    title,
-                    url,
-                    source,
-                    tags,
-                    createdAt: serverTimestamp()
-                });
+                
+                if (editingDocId) {
+                    const docToUpdate = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'documents', editingDocId);
+                    await updateDoc(docToUpdate, { title, url, source, folder, tags });
+                    showToast("Đã cập nhật tài liệu!");
+                } else {
+                    await addDoc(docsRef, {
+                        title, url, source, folder, tags,
+                        isPinned: false,
+                        createdAt: serverTimestamp()
+                    });
+                    showToast("Đã lưu tài liệu mới!");
+                }
                 
                 closeModal();
-                addDocForm.reset();
-                showToast("Đã lưu tài liệu!");
             } catch (error) {
-                console.error("Lỗi thêm tài liệu:", error);
+                console.error("Lỗi lưu tài liệu:", error);
                 showToast("Lỗi khi lưu!", "error");
             } finally {
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = 'Lưu tài liệu';
+                submitBtn.innerHTML = editingDocId ? 'Cập nhật' : 'Lưu tài liệu';
             }
         });
 
-        // Xóa tài liệu
         window.deleteDocument = async (docId, event) => {
-            // Ngăn chặn sự kiện click lan ra ngoài (không mở link khi bấm xóa)
-            if(event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-
-            if (!currentUser) return;
+            if(event) { event.preventDefault(); event.stopPropagation(); }
+            if (!currentUser || !confirm("Xóa tài liệu này?")) return;
             try {
                 const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'documents', docId);
                 await deleteDoc(docRef);
                 showToast("Đã xóa tài liệu!");
-            } catch (error) {
-                console.error("Lỗi xóa tài liệu:", error);
-                showToast("Không thể xóa!", "error");
-            }
+            } catch (error) { showToast("Lỗi xóa!", "error"); }
         };
 
-        // Render UI
+        window.togglePin = async (docId, currentPinState, event) => {
+            if(event) { event.preventDefault(); event.stopPropagation(); }
+            if (!currentUser) return;
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'documents', docId);
+                await updateDoc(docRef, { isPinned: !currentPinState });
+                showToast(currentPinState ? "Đã bỏ ghim" : "Đã ghim lên đầu", "success");
+            } catch (error) { showToast("Lỗi ghim!", "error"); }
+        };
+
+        window.openEditModal = (docId, event) => {
+            if(event) { event.preventDefault(); event.stopPropagation(); }
+            const docToEdit = documents.find(d => d.id === docId);
+            if(!docToEdit) return;
+
+            editingDocId = docId;
+            modalTitle.innerHTML = `<i data-lucide="edit" class="text-neon-blue w-5 h-5"></i> Sửa tài liệu`;
+            document.getElementById('submitDocBtn').innerHTML = 'Cập nhật';
+            
+            docTitleInput.value = docToEdit.title || '';
+            docUrlInput.value = docToEdit.url || '';
+            docSourceInput.value = docToEdit.source || 'other';
+            docFolderInput.value = docToEdit.folder || 'Chung';
+            docTagsInput.value = docToEdit.tags ? docToEdit.tags.join(', ') : '';
+
+            lucide.createIcons();
+            addModal.classList.remove('hidden'); addModal.classList.add('flex');
+        };
+
+        /* ==========================================
+           RENDER UI & LOGIC HIỂN THỊ
+           ========================================== */
+        function renderCurrentView() {
+            if (currentFolderFilter) {
+                currentFolderDisplay.innerHTML = `
+                    <div class="flex items-center gap-2 mb-3 px-1">
+                        <button onclick="clearFolderFilter()" class="text-gray-400 hover:text-white"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                        <h2 class="text-neon-blue font-bold text-sm uppercase tracking-wider">📁 ${currentFolderFilter}</h2>
+                    </div>
+                `;
+            } else {
+                currentFolderDisplay.innerHTML = '';
+            }
+
+            const searchTerm = searchInput.value.toLowerCase();
+            
+            const filteredData = documents.filter(doc => {
+                const matchSource = currentFilter === 'all' || doc.source === currentFilter;
+                const matchFolder = !currentFolderFilter || doc.folder === currentFolderFilter;
+                
+                const titleMatch = doc.title ? doc.title.toLowerCase().includes(searchTerm) : false;
+                const tagMatch = doc.tags ? doc.tags.some(tag => tag.toLowerCase().includes(searchTerm)) : false;
+                const matchSearch = searchTerm === '' || titleMatch || tagMatch;
+
+                return matchSource && matchFolder && matchSearch;
+            });
+
+            renderDocs(filteredData);
+        }
+
         function renderDocs(data) {
             if (data.length === 0) {
                 docListEl.innerHTML = `
-                    <div class="flex flex-col items-center justify-center py-16 text-center">
+                    <div class="flex flex-col items-center justify-center py-20 text-center">
                         <div class="w-20 h-20 rounded-full bg-space-800 border border-space-700 flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(0,240,255,0.2)]">
-                            <i data-lucide="astronaut" class="w-10 h-10 text-neon-blue"></i>
+                            <i data-lucide="telescope" class="w-10 h-10 text-neon-blue"></i>
                         </div>
-                        <p class="text-gray-400 text-sm">Vũ trụ trống rỗng.</p>
-                        <p class="text-gray-500 text-xs mt-1">Bấm dấu + để thêm tài liệu mới.</p>
+                        <p class="text-gray-400 text-sm">Chưa có tín hiệu nào ở đây.</p>
                     </div>
                 `;
             } else {
@@ -257,74 +341,113 @@
             lucide.createIcons();
         }
 
-        // SỬA LẠI THẺ <a> ĐỂ MỞ LINK CHUẨN XÁC
         function createDocCard(doc) {
             let iconName = 'file';
             let glowColor = 'shadow-[0_0_10px_rgba(255,255,255,0.1)]';
             let iconColor = 'text-gray-300';
 
-            if (doc.source === 'drive') {
-                iconName = 'hard-drive';
-                glowColor = 'shadow-[0_0_15px_rgba(0,240,255,0.3)]';
-                iconColor = 'text-neon-blue';
-            } else if (doc.source === 'notion') {
-                iconName = 'box';
-                glowColor = 'shadow-[0_0_15px_rgba(255,255,255,0.3)]';
-                iconColor = 'text-white';
-            } else {
-                iconName = 'link-2';
-                glowColor = 'shadow-[0_0_15px_rgba(176,38,255,0.3)]';
-                iconColor = 'text-neon-purple';
-            }
+            if (doc.source === 'drive') { iconName = 'hard-drive'; glowColor = 'shadow-[0_0_15px_rgba(0,240,255,0.3)]'; iconColor = 'text-neon-blue'; } 
+            else if (doc.source === 'notion') { iconName = 'box'; glowColor = 'shadow-[0_0_15px_rgba(255,255,255,0.3)]'; iconColor = 'text-white'; } 
+            else { iconName = 'link-2'; glowColor = 'shadow-[0_0_15px_rgba(176,38,255,0.3)]'; iconColor = 'text-neon-purple'; }
 
             const tagsHtml = doc.tags && doc.tags.length > 0 
                 ? doc.tags.map(tag => `<span class="inline-block bg-space-700/50 text-gray-300 border border-space-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">#${tag}</span>`).join('')
                 : '';
                 
             const safeUrl = doc.url ? formatUrl(doc.url) : '#';
+            const pinIcon = doc.isPinned ? 'pin-off' : 'pin';
+            const pinColor = doc.isPinned ? 'text-neon-pink' : 'text-gray-500 hover:text-white';
+            const pinGlow = doc.isPinned ? 'border-neon-pink/30 bg-neon-pink/10' : 'border-space-700 hover:border-white/30';
 
             return `
-                <div class="glass-card p-4 rounded-2xl flex gap-4 items-center relative group mb-4 hover:border-neon-blue/30 transition-colors">
-                    <!-- Icon -->
+                <div class="glass-card p-4 rounded-2xl flex gap-3 items-center relative group mb-4 transition-colors ${doc.isPinned ? 'border-neon-pink/30' : 'hover:border-neon-blue/30'}">
                     <div class="bg-space-800 p-3 rounded-xl flex-shrink-0 border border-space-700 ${glowColor}">
                         <i data-lucide="${iconName}" class="w-6 h-6 ${iconColor}"></i>
                     </div>
                     
-                    <!-- Nội dung + Link -->
-                    <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="flex-1 min-w-0 block">
-                        <h3 class="font-semibold text-white text-sm truncate hover:text-neon-blue transition-colors">${doc.title}</h3>
-                        <p class="text-xs text-gray-400 mt-1 capitalize">${doc.source}</p>
+                    <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="flex-1 min-w-0 block py-1">
+                        <div class="flex items-center gap-2">
+                            ${doc.isPinned ? '<i data-lucide="pin" class="w-3 h-3 text-neon-pink fill-neon-pink"></i>' : ''}
+                            <h3 class="font-semibold text-white text-sm truncate hover:text-neon-blue transition-colors">${doc.title}</h3>
+                        </div>
+                        <p class="text-[10px] text-gray-400 mt-1 flex items-center gap-2">
+                            <span class="capitalize text-neon-blue/80">${doc.source}</span> • 
+                            <span>📁 ${doc.folder || 'Chung'}</span>
+                        </p>
                         <div class="flex gap-1 mt-2 overflow-x-hidden flex-wrap">
                             ${tagsHtml}
                         </div>
                     </a>
                     
-                    <!-- Nút Xóa -->
-                    <button onclick="deleteDocument('${doc.id}', event)" class="flex-shrink-0 text-gray-500 hover:text-neon-pink p-2 bg-space-800 rounded-full border border-space-700 transition-colors z-10 relative">
-                        <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                    </button>
+                    <div class="flex flex-col gap-2 flex-shrink-0">
+                        <button onclick="togglePin('${doc.id}', ${doc.isPinned}, event)" class="p-2 rounded-full border ${pinGlow} transition-colors">
+                            <i data-lucide="${pinIcon}" class="w-4 h-4 ${pinColor} pointer-events-none"></i>
+                        </button>
+                        <div class="flex gap-2">
+                            <button onclick="openEditModal('${doc.id}', event)" class="p-2 bg-space-800 rounded-full border border-space-700 hover:text-neon-blue transition-colors text-gray-500">
+                                <i data-lucide="edit-2" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+                            <button onclick="deleteDocument('${doc.id}', event)" class="p-2 bg-space-800 rounded-full border border-space-700 hover:text-neon-pink transition-colors text-gray-500">
+                                <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             `;
         }
 
-        function filterAndRenderDocs() {
-            const searchTerm = searchInput.value.toLowerCase();
+        function renderFolderView() {
+            currentFolderFilter = null;
+            currentFolderDisplay.innerHTML = '';
             
-            const filteredData = documents.filter(doc => {
-                const matchSource = currentFilter === 'all' || doc.source === currentFilter;
-                
-                const titleMatch = doc.title ? doc.title.toLowerCase().includes(searchTerm) : false;
-                const tagMatch = doc.tags ? doc.tags.some(tag => tag.toLowerCase().includes(searchTerm)) : false;
-                
-                const matchSearch = searchTerm === '' || titleMatch || tagMatch;
+            const folders = [...new Set(documents.map(d => d.folder || 'Chung'))];
+            
+            if (folders.length === 0) {
+                renderDocs([]);
+                return;
+            }
 
-                return matchSource && matchSearch;
+            const folderCounts = {};
+            documents.forEach(d => {
+                const f = d.folder || 'Chung';
+                folderCounts[f] = (folderCounts[f] || 0) + 1;
             });
 
-            renderDocs(filteredData);
+            docListEl.innerHTML = `
+                <div class="grid grid-cols-2 gap-4">
+                    ${folders.map(folder => `
+                        <div onclick="filterByFolder('${folder}')" class="glass-card p-5 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-neon-blue/50 hover:shadow-[0_0_15px_rgba(0,240,255,0.2)] transition-all">
+                            <i data-lucide="folder" class="w-10 h-10 text-neon-blue mb-2 fill-neon-blue/20"></i>
+                            <h3 class="font-bold text-white text-sm text-center truncate w-full">${folder}</h3>
+                            <p class="text-xs text-gray-400 mt-1">${folderCounts[folder]} tài liệu</p>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            lucide.createIcons();
         }
 
-        searchInput.addEventListener('input', filterAndRenderDocs);
+        window.filterByFolder = (folder) => {
+            currentFolderFilter = folder;
+            renderCurrentView();
+            searchInput.value = '';
+        };
+
+        window.clearFolderFilter = () => {
+            currentFolderFilter = null;
+            renderCurrentView();
+        };
+
+        /* ==========================================
+           SỰ KIỆN TƯƠNG TÁC
+           ========================================== */
+        searchInput.addEventListener('input', () => {
+            if (!currentFolderFilter && document.querySelector('.grid-cols-2')) {
+                renderCurrentView(); 
+            } else {
+                renderCurrentView();
+            }
+        });
 
         filterBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -337,30 +460,35 @@
                 clickedBtn.classList.add('bg-neon-blue/20', 'text-neon-blue', 'border-neon-blue/50');
 
                 currentFilter = clickedBtn.getAttribute('data-source');
-                filterAndRenderDocs();
+                renderCurrentView();
             });
         });
 
-        /* ==========================================
-           TƯƠNG TÁC UI (MODAL & NÚT BOTTOM NAV)
-           ========================================== */
-        function openModal() { addModal.classList.remove('hidden'); addModal.classList.add('flex'); }
+        function openModal() { 
+            editingDocId = null;
+            modalTitle.innerHTML = `<i data-lucide="rocket" class="text-neon-pink w-5 h-5"></i> Bắn link mới`;
+            document.getElementById('submitDocBtn').innerHTML = 'Lưu tài liệu';
+            addDocForm.reset();
+            docFolderInput.value = 'Chung';
+            lucide.createIcons();
+            addModal.classList.remove('hidden'); addModal.classList.add('flex'); 
+        }
         function closeModal() { addModal.classList.add('hidden'); addModal.classList.remove('flex'); }
         
         addBtn.addEventListener('click', openModal);
         cancelAddBtn.addEventListener('click', closeModal);
 
-        // Nút Home / Radar (Cuộn lên đầu)
         homeBtn.addEventListener('click', () => {
-            document.querySelector('.content-area').scrollTo({ top: 0, behavior: 'smooth' });
+            currentFolderFilter = null;
             searchInput.value = '';
-            filterAndRenderDocs();
-            showToast("Đã quét radar", "success");
+            document.querySelector('.content-area').scrollTo({ top: 0, behavior: 'smooth' });
+            renderCurrentView();
+            showToast("Trang chủ", "success");
         });
 
-        // Nút Cài đặt
-        settingsBtn.addEventListener('click', () => {
-            showToast("Chức năng cài đặt đang được xây dựng!", "success");
+        folderViewBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            renderFolderView();
         });
 
         initAuth();
@@ -378,93 +506,94 @@
         }
 
         .galaxy-bg {
-            position: fixed;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            background: 
-                radial-gradient(circle at 15% 50%, rgba(176, 38, 255, 0.08), transparent 25%),
-                radial-gradient(circle at 85% 30%, rgba(0, 240, 255, 0.08), transparent 25%);
-            z-index: 0;
-            pointer-events: none;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: radial-gradient(circle at 15% 50%, rgba(176, 38, 255, 0.08), transparent 25%),
+                        radial-gradient(circle at 85% 30%, rgba(0, 240, 255, 0.08), transparent 25%);
+            z-index: 0; pointer-events: none;
         }
 
         .glass-card {
             background: rgba(21, 25, 43, 0.6);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         .glass-header {
             background: rgba(11, 13, 23, 0.85);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         ::-webkit-scrollbar { width: 0px; background: transparent; }
 
+        /* Sửa giao diện tự động nhận diện tỷ lệ màn hình (Fix lẹm nút) */
         .app-container {
-            max-width: 480px;
-            margin: 0 auto;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            position: relative;
-            z-index: 1;
+            max-width: 480px; margin: 0 auto;
+            height: 100dvh; 
+            display: flex; flex-direction: column;
+            position: relative; z-index: 1;
         }
 
         .content-area {
-            flex: 1;
-            overflow-y: auto;
-            padding-bottom: 100px;
+            flex: 1; overflow-y: auto;
+            padding-bottom: calc(90px + env(safe-area-inset-bottom, 20px));
             scroll-behavior: smooth;
         }
         
         .neon-input {
             background: rgba(30, 36, 64, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            color: white;
-            transition: all 0.3s ease;
+            color: white; transition: all 0.3s ease;
         }
-        .neon-input:focus {
-            outline: none;
-            border-color: #00F0FF;
-            box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
-        }
+        .neon-input:focus { outline: none; border-color: #00F0FF; box-shadow: 0 0 10px rgba(0, 240, 255, 0.2); }
+        
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 16px); }
     </style>
 </head>
 <body>
 
 <div class="galaxy-bg"></div>
-
-<!-- Container chứa thông báo pop-up -->
 <div id="toastContainer"></div>
 
-<div class="app-container">
+<!-- MÀN HÌNH ĐĂNG NHẬP -->
+<div id="loginScreen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-space-900 hidden">
+    <div class="glass-card p-8 rounded-3xl flex flex-col items-center text-center max-w-sm w-11/12 border-neon-blue/30 shadow-[0_0_30px_rgba(0,240,255,0.15)]">
+        <div class="w-24 h-24 rounded-full bg-space-800 border-2 border-neon-blue flex items-center justify-center mb-6 shadow-[0_0_20px_rgba(0,240,255,0.4)]">
+            <i data-lucide="rocket" class="w-12 h-12 text-neon-blue"></i>
+        </div>
+        <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-neon-blue to-neon-purple mb-2">DocHub</h1>
+        <p class="text-gray-400 text-sm mb-8">Đăng nhập để vào trạm không gian lưu trữ tài liệu cá nhân.</p>
+        
+        <button id="loginBtn" class="w-full py-3.5 bg-white text-gray-900 font-bold rounded-xl flex items-center justify-center gap-3 hover:bg-gray-100 transition shadow-lg active:scale-95">
+            <i data-lucide="log-in" class="w-5 h-5"></i> Đăng nhập bằng Google
+        </button>
+        <p class="text-[10px] text-gray-500 mt-6">Dữ liệu được bảo vệ an toàn trên nền tảng Firebase.</p>
+    </div>
+</div>
+
+<!-- MÀN HÌNH APP CHÍNH -->
+<div id="mainApp" class="app-container hidden">
     
     <!-- Header -->
     <div class="glass-header pt-10 pb-4 px-5 z-10 sticky top-0">
         <div class="flex justify-between items-center mb-5">
             <div>
                 <h1 class="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-neon-blue to-neon-purple">DocHub</h1>
-                <p class="text-gray-400 text-xs uppercase tracking-widest mt-1">Trạm không gian tài liệu</p>
+                <p class="text-gray-400 text-[10px] uppercase tracking-widest mt-1">Trạm không gian tài liệu</p>
             </div>
-            <div class="w-10 h-10 rounded-full border border-space-700 flex items-center justify-center bg-space-800 shadow-[0_0_10px_rgba(176,38,255,0.2)]">
+            <div id="userAvatar" class="w-10 h-10 rounded-full border border-space-700 flex items-center justify-center bg-space-800 shadow-[0_0_10px_rgba(176,38,255,0.2)] cursor-pointer hover:border-neon-pink transition">
                 <i data-lucide="user" class="w-5 h-5 text-neon-purple"></i>
             </div>
         </div>
         
-        <!-- Thanh Tìm Kiếm -->
         <div class="relative">
             <i data-lucide="search" class="absolute left-4 top-3.5 text-gray-400 w-5 h-5"></i>
-            <input type="text" id="searchInput" 
-                class="w-full neon-input rounded-2xl py-3 pl-12 pr-4 text-sm placeholder-gray-500"
-                placeholder="Tìm tín hiệu (tên, tag)...">
+            <input type="text" id="searchInput" class="w-full neon-input rounded-2xl py-3 pl-12 pr-4 text-sm placeholder-gray-500" placeholder="Tìm tín hiệu (tên, tag)...">
         </div>
     </div>
 
     <!-- Filters -->
-    <div class="px-5 py-3 overflow-x-auto whitespace-nowrap flex gap-3 z-10 border-b border-space-800">
+    <div class="px-5 py-3 overflow-x-auto whitespace-nowrap flex gap-3 z-10 border-b border-space-800 shadow-sm">
         <button class="filter-btn active px-5 py-2 bg-neon-blue/20 text-neon-blue border border-neon-blue/50 rounded-full text-xs font-medium transition-all" data-source="all">Tất cả</button>
         <button class="filter-btn px-5 py-2 bg-space-800 text-gray-400 border border-space-700 rounded-full text-xs font-medium transition-all" data-source="drive">Drive</button>
         <button class="filter-btn px-5 py-2 bg-space-800 text-gray-400 border border-space-700 rounded-full text-xs font-medium transition-all" data-source="notion">Notion</button>
@@ -472,39 +601,39 @@
     </div>
 
     <!-- Danh sách -->
-    <div class="content-area px-5 py-4" id="docList">
-        <!-- Loading -->
-        <div id="loadingIndicator" class="flex justify-center items-center py-10">
-            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-neon-blue"></div>
+    <div class="content-area px-5 py-4">
+        <div id="currentFolderDisplay"></div>
+        <div id="docList">
+            <div id="loadingIndicator" class="flex justify-center items-center py-10">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-neon-blue"></div>
+            </div>
         </div>
-        <!-- Render từ Firebase -->
     </div>
 
     <!-- Bottom Nav -->
-    <div class="absolute bottom-0 left-0 w-full glass-header px-8 py-4 flex justify-between items-center z-20 pb-safe">
-        <div id="homeBtn" class="flex flex-col items-center text-neon-blue cursor-pointer transition transform hover:scale-110">
+    <div class="absolute bottom-0 left-0 w-full glass-header px-8 pt-3 pb-safe flex justify-between items-center z-20 shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
+        <div id="homeBtn" class="flex flex-col items-center text-neon-blue cursor-pointer transition transform active:scale-90">
             <i data-lucide="radar" class="w-6 h-6 mb-1"></i>
             <span class="text-[10px] font-medium">Radar</span>
         </div>
         
-        <!-- Nút Thêm Mới -->
-        <div class="relative -top-6">
-            <button id="addBtn" class="bg-gradient-to-r from-neon-blue to-neon-purple text-white p-4 rounded-full shadow-[0_0_20px_rgba(176,38,255,0.4)] hover:scale-105 transition transform flex items-center justify-center">
+        <div class="relative -top-8">
+            <button id="addBtn" class="bg-gradient-to-r from-neon-blue to-neon-purple text-white p-4 rounded-full shadow-[0_0_20px_rgba(176,38,255,0.4)] hover:scale-105 active:scale-95 transition transform flex items-center justify-center border-2 border-space-900">
                 <i data-lucide="plus" class="w-7 h-7"></i>
             </button>
         </div>
         
-        <div id="settingsBtn" class="flex flex-col items-center text-gray-500 hover:text-white transition cursor-pointer transform hover:scale-110">
-            <i data-lucide="settings" class="w-6 h-6 mb-1"></i>
-            <span class="text-[10px] font-medium">Cài đặt</span>
+        <div id="folderViewBtn" class="flex flex-col items-center text-gray-500 hover:text-white transition cursor-pointer transform active:scale-90">
+            <i data-lucide="folder-kanban" class="w-6 h-6 mb-1"></i>
+            <span class="text-[10px] font-medium">Thư mục</span>
         </div>
     </div>
 </div>
 
-<!-- Modal Thêm Tài Liệu -->
+<!-- Modal Thêm/Sửa Tài Liệu -->
 <div id="addModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-5">
     <div class="glass-card w-full max-w-sm rounded-3xl p-6 border border-space-700 shadow-[0_0_30px_rgba(0,240,255,0.1)] transform transition-all">
-        <h2 class="text-xl font-bold mb-5 text-white flex items-center gap-2">
+        <h2 id="modalTitle" class="text-xl font-bold mb-5 text-white flex items-center gap-2">
             <i data-lucide="rocket" class="text-neon-pink w-5 h-5"></i> Bắn link mới
         </h2>
         <form id="addDocForm" class="flex flex-col gap-4">
@@ -516,22 +645,28 @@
                 <label class="block text-xs text-gray-400 mb-1 ml-1">Đường dẫn (URL) <span class="text-neon-pink">*</span></label>
                 <input type="url" id="docUrl" required class="w-full neon-input rounded-xl py-2.5 px-4 text-sm" placeholder="https://...">
             </div>
-            <div>
-                <label class="block text-xs text-gray-400 mb-1 ml-1">Nguồn</label>
-                <select id="docSource" class="w-full neon-input rounded-xl py-2.5 px-4 text-sm appearance-none">
-                    <option value="drive">Google Drive</option>
-                    <option value="notion">Notion</option>
-                    <option value="other">Link Khác</option>
-                </select>
+            <div class="flex gap-3">
+                <div class="flex-1">
+                    <label class="block text-xs text-gray-400 mb-1 ml-1">Nguồn</label>
+                    <select id="docSource" class="w-full neon-input rounded-xl py-2.5 px-4 text-sm appearance-none">
+                        <option value="drive">Drive</option>
+                        <option value="notion">Notion</option>
+                        <option value="other">Khác</option>
+                    </select>
+                </div>
+                <div class="flex-1">
+                    <label class="block text-xs text-gray-400 mb-1 ml-1">Thư mục</label>
+                    <input type="text" id="docFolder" class="w-full neon-input rounded-xl py-2.5 px-4 text-sm" placeholder="Vd: Công việc" value="Chung">
+                </div>
             </div>
             <div>
-                <label class="block text-xs text-gray-400 mb-1 ml-1">Tags (cách nhau bởi dấu phẩy)</label>
+                <label class="block text-xs text-gray-400 mb-1 ml-1">Tags (cách nhau dấu phẩy)</label>
                 <input type="text" id="docTags" class="w-full neon-input rounded-xl py-2.5 px-4 text-sm" placeholder="Vd: q3, plan, design">
             </div>
             
             <div class="flex gap-3 mt-4">
-                <button type="button" id="cancelAddBtn" class="flex-1 py-3 rounded-xl bg-space-800 text-gray-300 font-medium text-sm hover:bg-space-700 transition">Hủy bỏ</button>
-                <button type="submit" id="submitDocBtn" class="flex-1 py-3 rounded-xl bg-neon-blue text-space-900 font-bold text-sm hover:shadow-[0_0_15px_rgba(0,240,255,0.4)] transition">Lưu tài liệu</button>
+                <button type="button" id="cancelAddBtn" class="flex-1 py-3 rounded-xl bg-space-800 text-gray-300 font-medium text-sm hover:bg-space-700 transition active:scale-95">Hủy</button>
+                <button type="submit" id="submitDocBtn" class="flex-[2] py-3 rounded-xl bg-neon-blue text-space-900 font-bold text-sm hover:shadow-[0_0_15px_rgba(0,240,255,0.4)] transition active:scale-95">Lưu tài liệu</button>
             </div>
         </form>
     </div>
