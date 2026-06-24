@@ -1,0 +1,119 @@
+import React, { useState, useEffect } from 'react';
+import { Rocket, Zap, Loader2, Link2, Inbox, Search, AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react';
+import { initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, collection, onSnapshot, query, orderBy, addDoc, serverTimestamp } from "firebase/firestore";
+
+/* Firebase Config */
+const firebaseConfig = {
+  apiKey: "AIzaSyCLqRN936fxkbdu78248mdXWT7uSzhxYPQ",
+  authDomain: "quanlydulieuapp.firebaseapp.com",
+  projectId: "quanlydulieuapp",
+  storageBucket: "quanlydulieuapp.firebasestorage.app",
+  messagingSenderId: "907400767703",
+  appId: "1:907400767703:web:bd4590862b274e2ee82892",
+  measurementId: "G-L8YRSMQT5L"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+/* --- COMPONENTS --- */
+
+const STATE = { IDLE: 'idle', FETCHING: 'fetching', SAVING: 'saving', SUCCESS: 'success', ERROR: 'error' };
+
+const QuickCapture = ({ user }) => {
+  const [url, setUrl] = useState('');
+  const [status, setStatus] = useState(STATE.IDLE);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!url) return;
+    setStatus(STATE.FETCHING);
+    try {
+      setStatus(STATE.SAVING);
+      await addDoc(collection(db, 'artifacts', 'dochub-galaxy-v4', 'users', user.uid, 'documents'), {
+        title: "Tài liệu mới",
+        url: url,
+        folder: 'Inbox',
+        createdAt: serverTimestamp()
+      });
+      setStatus(STATE.SUCCESS);
+      setUrl('');
+      setTimeout(() => setStatus(STATE.IDLE), 2000);
+    } catch (e) {
+      setStatus(STATE.ERROR);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSave} className="p-4 bg-[#0B0D17] border-b border-white/5">
+      <div className="relative flex gap-2">
+        <input 
+          value={url} onChange={(e) => setUrl(e.target.value)}
+          className="flex-1 bg-[#15192B] border border-white/10 rounded-xl p-3 text-sm text-white placeholder-gray-500 outline-none focus:border-[#00F0FF]"
+          placeholder="Bắn link vào Inbox..."
+        />
+        <button disabled={status === STATE.SAVING} className="bg-[#00F0FF] text-[#0B0D17] p-3 rounded-xl font-bold">
+          {status === STATE.SAVING ? <Loader2 className="animate-spin" /> : <Zap size={20} />}
+        </button>
+      </div>
+      {status === STATE.SUCCESS && <p className="text-[#00F0FF] text-[10px] mt-2 flex items-center gap-1"><CheckCircle2 size={12} /> Đã lưu thành công!</p>}
+    </form>
+  );
+};
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    signInAnonymously(auth);
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'artifacts', 'dochub-galaxy-v4', 'users', user.uid, 'documents'),
+      orderBy('createdAt', 'desc')
+    );
+    return onSnapshot(q, (s) => setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+  }, [user]);
+
+  return (
+    <div className="min-h-screen bg-[#0B0D17] text-white flex flex-col items-center">
+      <style>{`
+        body { margin: 0; font-family: -apple-system, sans-serif; }
+        .glass-card { background: rgba(21, 25, 43, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); }
+      `}</style>
+
+      <div className="w-full max-w-md flex flex-col h-screen">
+        <header className="p-5 flex items-center justify-between border-b border-white/5">
+          <h1 className="text-xl font-bold bg-gradient-to-r from-[#00F0FF] to-[#B026FF] bg-clip-text text-transparent">DocHub Pro</h1>
+          <Rocket className="text-[#00F0FF]" />
+        </header>
+
+        <QuickCapture user={user} />
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <h2 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2 mb-4">
+            <Inbox size={12} /> Inbox Zero ({items.length})
+          </h2>
+          
+          {items.map(item => (
+            <div key={item.id} className="glass-card p-4 rounded-2xl flex items-center gap-4 group hover:border-white/20 transition-all">
+              <div className="p-2.5 bg-[#15192B] rounded-xl border border-white/5"><Link2 size={16} className="text-[#00F0FF]" /></div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate text-white">{item.title || "Tài liệu không tiêu đề"}</p>
+                <p className="text-[10px] text-gray-500 truncate">{item.url}</p>
+              </div>
+              <ChevronRight size={16} className="text-gray-600 group-hover:text-white" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
